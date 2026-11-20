@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UJIAN MODUL P. PANCASILA BAB 3</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { user-select: none; -webkit-user-select: none; -ms-user-select: none; }
+    #wacana-container { overflow-y: auto; max-height: 80vh; }
+    /* Mematikan klik, drag, dan tautan pada gambar wacana/soal */
+    #exam-page img { pointer-events: none; -webkit-user-drag: none; }
+    #exam-page a { pointer-events: none; text-decoration: none; cursor: default; }
+  </style>
+</head>
+<body class="bg-gray-100 font-sans p-4">
+
+  <!-- ================= HALAMAN LOGIN ================= -->
+  <div id="login-page" class="max-w-md mx-auto bg-white p-6 rounded-lg shadow-md mt-10">
+    <h2 class="text-2xl font-bold mb-4 text-center">Login Ujian</h2>
+    
+    <label class="block mb-2 text-sm font-medium">Pilih Kelas</label>
+    <select id="kelas" class="w-full border p-2 mb-4 rounded" onchange="updateNama()">
+      <option value="">-- Loading Data... --</option>
+    </select>
+
+    <label class="block mb-2 text-sm font-medium">Pilih Nama</label>
+    <select id="nama" class="w-full border p-2 mb-6 rounded" disabled>
+      <option value="">-- Pilih Kelas Dahulu --</option>
+    </select>
+
+    <button id="btn-mulai" class="w-full bg-blue-600 hover:bg-blue-700 text-white p-2 rounded disabled:bg-gray-400 font-bold" onclick="mulaiUjian()" disabled>MULAI UJIAN</button>
+  </div>
+
+  <!-- ================= HALAMAN UJIAN ================= -->
+  <div id="exam-page" class="hidden max-w-6xl mx-auto flex flex-col md:flex-row gap-4 mt-4">
+    <div class="md:w-1/2 bg-white p-6 rounded-lg shadow-md" id="wacana-container">
+      <h3 class="font-bold text-lg mb-4 text-gray-700 border-b pb-2">Teks Referensi</h3>
+      <div id="wacana-teks" class="text-gray-700 leading-relaxed text-sm md:text-base text-justify">Loading...</div>
+    </div>
+
+    <div class="md:w-1/2 bg-white p-6 rounded-lg shadow-md relative">
+      <div class="flex justify-between items-center mb-4 border-b pb-2">
+        <span class="font-bold text-blue-700" id="nama-siswa-display"></span>
+        <span id="timer-display" class="font-mono font-bold text-lg bg-blue-100 text-blue-800 px-3 py-1 rounded-lg border border-blue-300">
+          30:00
+        </span>
+      </div>
+      
+      <div id="soal-container" class="mb-8"></div>
+      
+      <div class="flex justify-between mt-auto">
+        <button class="bg-gray-300 hover:bg-gray-400 p-2 rounded w-24 font-bold text-sm" onclick="navigasi(-1)">KEMBALI</button>
+        <button id="btn-selanjutnya" class="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded w-32 font-bold text-sm" onclick="navigasi(1)">SELANJUTNYA</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= JAVASCRIPT ================= -->
+  <script>
+    // ⚠️ MASUKKAN URL GOOGLE APPS SCRIPT ANDA DI BAWAH INI ⚠️
+    const API_URL = "GANTI_DENGAN_URL_GAS_ANDA"; 
+
+    let dbSiswa, dbWacana, dbSoal;
+    let indexSoal = 0;
+    let jawabanSiswa = {}; 
+    let warningCount = 0;
+    let isSubmitting = false;
+
+    // --- PENGATURAN TIMER (30 MENIT = 1800 DETIK) ---
+    let sisaWaktu = 30 * 60; 
+    let timerInterval;
+
+    function mulaiTimer() {
+      const timerEl = document.getElementById('timer-display');
+      
+      timerInterval = setInterval(() => {
+        if (isSubmitting) {
+          clearInterval(timerInterval);
+          return;
+        }
+
+        sisaWaktu--;
+        let menit = Math.floor(sisaWaktu / 60);
+        let detik = sisaWaktu % 60;
+
+        timerEl.innerText = `${String(menit).padStart(2, '0')}:${String(detik).padStart(2, '0')}`;
+
+        // Ubah warna jadi merah berkedip jika sisa waktu <= 5 menit (300 detik)
+        if (sisaWaktu <= 300) {
+          timerEl.classList.remove('bg-blue-100', 'text-blue-800', 'border-blue-300');
+          timerEl.classList.add('bg-red-100', 'text-red-700', 'border-red-400', 'animate-pulse');
+        }
+
+        // Jika waktu habis, otomatis submit
+        if (sisaWaktu <= 0) {
+          clearInterval(timerInterval);
+          isSubmitting = true;
+          alert("WAKTU HABIS!\nJawaban Anda akan otomatis dikirim ke sistem sekarang.");
+          prosesSelesai();
+        }
+      }, 1000);
+    }
+
+    // --- ANTI CHEAT (MAKSIMAL 3 PELANGGARAN) ---
+    document.addEventListener('contextmenu', e => e.preventDefault());
+    document.addEventListener('copy', e => { e.preventDefault(); alert('Tindakan menyalin dilarang!'); });
+    
+    function prosesPelanggaran(jenisPelanggaran) {
+      if (document.getElementById('exam-page').classList.contains('hidden') || isSubmitting) return;
+      
+      warningCount++;
+      if (warningCount < 3) {
+        let sisaKesempatan = 3 - warningCount;
+        alert(`PERINGATAN ${warningCount}/3!\nAnda terdeteksi ${jenisPelanggaran}.\nTersisa ${sisaKesempatan} kesempatan lagi sebelum ujian dihentikan paksa!`);
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else if (warningCount >= 3) {
+        alert("PELANGGARAN FATAL!\nAnda telah melanggar aturan sebanyak 3 kali. Ujian dihentikan paksa dan jawaban dikirim sekarang.");
+        isSubmitting = true;
+        prosesSelesai();
+      }
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        prosesPelanggaran("berganti tab atau meminimalkan browser");
+      }
+    });
+
+    document.addEventListener("fullscreenchange", () => {
+      if (!document.fullscreenElement) {
+        prosesPelanggaran("keluar dari mode layar penuh (Full Screen)");
+      }
+    });
+
+    // --- AMBIL DATA DARI SERVER ---
+    async function loadData() {
+      try {
+        const response = await fetch(API_URL + "?action=getData");
+        const data = await response.json();
+        dbSiswa = data.siswa;
+        dbWacana = data.wacana;
+        dbSoal = data.soal;
+
+        const selectKelas = document.getElementById('kelas');
+        selectKelas.innerHTML = '<option value="">-- Pilih Kelas --</option>';
+        Object.keys(dbSiswa).forEach(k => selectKelas.add(new Option(k, k)));
+      } catch (error) {
+        alert("Gagal memuat data. Pastikan URL API benar dan internet stabil.");
+      }
+    }
+    
+    loadData();
+
+    function updateNama() {
+      const kelas = document.getElementById('kelas').value;
+      const selectNama = document.getElementById('nama');
+      selectNama.innerHTML = '<option value="">-- Pilih Nama --</option>';
+      if (kelas) {
+        selectNama.disabled = false;
+        dbSiswa[kelas].forEach(s => selectNama.add(new Option(s.nama, s.nis)));
+      } else {
+        selectNama.disabled = true;
+        document.getElementById('btn-mulai').disabled = true;
+      }
+    }
+
+    document.getElementById('nama').addEventListener('change', function() {
+      document.getElementById('btn-mulai').disabled = this.value === "";
+    });
+
+    function mulaiUjian() {
+      document.getElementById('login-page').classList.add('hidden');
+      document.getElementById('exam-page').classList.remove('hidden');
+      let sel = document.getElementById('nama');
+      document.getElementById('nama-siswa-display').innerText = "Peserta: " + sel.options[sel.selectedIndex].text;
+      
+      document.documentElement.requestFullscreen().catch(() => {});
+      mulaiTimer();
+      tampilSoal();
+    }
+
+    // --- RENDER SOAL ---
+    function tampilSoal() {
+      let soal = dbSoal[indexSoal];
+      
+      let teksWacana = dbWacana[soal.id_wacana];
+      document.getElementById('wacana-teks').innerHTML = teksWacana ? teksWacana.replace(/\n/g, "<br><br>") : "<span class='text-gray-400 italic'>Tidak ada teks referensi tambahan.</span>";
+
+      let htmlSoal = `<p class="font-bold text-lg mb-4 text-justify">${indexSoal + 1}. ${soal.pertanyaan}</p>`;
+      
+      if (soal.jenis === 'PG_Biasa') {
+        soal.opsi.forEach((opsiTeks, idx) => {
+          let teks = opsiTeks ? opsiTeks.toString().trim() : "";
+          if (teks !== "" && teks !== "-") {
+            let val = (idx + 1).toString();
+            let checked = jawabanSiswa[soal.id_soal] === val ? "checked" : "";
+            htmlSoal += `
+            <label class="block p-3 border border-gray-300 rounded-lg mb-2 hover:bg-blue-50 cursor-pointer transition">
+              <input type="radio" name="soal_pg" value="${val}" ${checked} onchange="jawabanSiswa['${soal.id_soal}'] = this.value" class="mr-2"> 
+              ${teks}
+            </label>`;
+          }
+        });
+      } 
+      else if (soal.jenis === 'PG_Kompleks') {
+        if (!jawabanSiswa[soal.id_soal]) jawabanSiswa[soal.id_soal] = []; 
+        htmlSoal += `<p class="text-sm text-blue-600 mb-2 italic">*Jawaban benar lebih dari satu</p>`;
+        soal.opsi.forEach((opsiTeks, idx) => {
+          let teks = opsiTeks ? opsiTeks.toString().trim() : "";
+          if (teks !== "" && teks !== "-") {
+            let val = (idx + 1).toString();
+            let checked = jawabanSiswa[soal.id_soal].includes(val) ? "checked" : "";
+            htmlSoal += `
+            <label class="block p-3 border border-gray-300 rounded-lg mb-2 hover:bg-blue-50 cursor-pointer transition">
+              <input type="checkbox" value="${val}" ${checked} onchange="updateKompleks('${soal.id_soal}', this.value, this.checked)" class="mr-2"> 
+              ${teks}
+            </label>`;
+          }
+        });
+      }
+      else if (soal.jenis === 'Benar_Salah') {
+        if (!jawabanSiswa[soal.id_soal]) jawabanSiswa[soal.id_soal] = []; 
+        let tabel = `
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse border border-gray-300 mt-2">
+            <tr class="bg-gray-100">
+              <th class="border border-gray-300 p-3">Pernyataan</th>
+              <th class="border border-gray-300 p-3 text-center w-20">Benar</th>
+              <th class="border border-gray-300 p-3 text-center w-20">Salah</th>
+            </tr>`;
+        soal.opsi.forEach((opsiTeks, idx) => {
+          let teks = opsiTeks ? opsiTeks.toString().trim() : "";
+          if (teks !== "" && teks !== "-") {
+             let valB = jawabanSiswa[soal.id_soal][idx] === 'B' ? 'checked' : '';
+             let valS = jawabanSiswa[soal.id_soal][idx] === 'S' ? 'checked' : '';
+             tabel += `
+             <tr class="hover:bg-gray-50">
+               <td class="border border-gray-300 p-3 text-sm">${teks}</td>
+               <td class="border border-gray-300 p-3 text-center bg-green-50"><input type="radio" name="bs_${soal.id_soal}_${idx}" value="B" ${valB} onchange="updateArray('${soal.id_soal}', ${idx}, 'B')" class="w-4 h-4 cursor-pointer"></td>
+               <td class="border border-gray-300 p-3 text-center bg-red-50"><input type="radio" name="bs_${soal.id_soal}_${idx}" value="S" ${valS} onchange="updateArray('${soal.id_soal}', ${idx}, 'S')" class="w-4 h-4 cursor-pointer"></td>
+             </tr>`;
+          }
+        });
+        tabel += `</table></div>`;
+        htmlSoal += tabel;
+      }
+      else if (soal.jenis === 'Menjodohkan') {
+        if (!jawabanSiswa[soal.id_soal]) jawabanSiswa[soal.id_soal] = []; 
+        let tabel = `
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse border border-gray-300 mt-2">
+            <tr class="bg-gray-100">
+              <th class="border border-gray-300 p-3">Pernyataan / Tindakan</th>
+              <th class="border border-gray-300 p-3 text-center w-32">Pasangan</th>
+            </tr>`;
+        soal.opsi.forEach((opsiTeks, idx) => {
+          let teks = opsiTeks ? opsiTeks.toString().trim() : "";
+          if (teks !== "" && teks !== "-") {
+             let jwb = jawabanSiswa[soal.id_soal][idx] || "";
+             tabel += `
+             <tr class="hover:bg-gray-50">
+               <td class="border border-gray-300 p-3 text-sm">${teks}</td>
+               <td class="border border-gray-300 p-2 text-center bg-blue-50">
+                 <select class="w-full border border-gray-400 p-1 rounded font-bold text-center cursor-pointer" onchange="updateArray('${soal.id_soal}', ${idx}, this.value)">
+                   <option value="">- Pilih -</option>
+                   <option value="A" ${jwb === 'A' ? 'selected' : ''}>A</option>
+                   <option value="B" ${jwb === 'B' ? 'selected' : ''}>B</option>
+                   <option value="C" ${jwb === 'C' ? 'selected' : ''}>C</option>
+                   <option value="D" ${jwb === 'D' ? 'selected' : ''}>D</option>
+                   <option value="E" ${jwb === 'E' ? 'selected' : ''}>E</option>
+                 </select>
+               </td>
+             </tr>`;
+          }
+        });
+        tabel += `</table></div>`;
+        htmlSoal += tabel;
+      }
+
+      document.getElementById('soal-container').innerHTML = htmlSoal;
+
+      let btnNext = document.getElementById('btn-selanjutnya');
+      if (indexSoal === dbSoal.length - 1) {
+        btnNext.innerText = "SELESAI & KIRIM";
+        btnNext.classList.replace('bg-blue-600', 'bg-red-600');
+        btnNext.classList.replace('hover:bg-blue-700', 'hover:bg-red-700');
+        btnNext.onclick = selesaiUjian;
+      } else {
+        btnNext.innerText = "SELANJUTNYA";
+        btnNext.classList.replace('bg-red-600', 'bg-blue-600');
+        btnNext.classList.replace('hover:bg-red-700', 'hover:bg-blue-700');
+        btnNext.onclick = () => navigasi(1);
+      }
+    }
+
+    function updateKompleks(id, nilai, isChecked) {
+      if (isChecked) {
+        jawabanSiswa[id].push(nilai);
+        jawabanSiswa[id].sort();
+      } else {
+        jawabanSiswa[id] = jawabanSiswa[id].filter(item => item !== nilai);
+      }
+    }
+
+    function updateArray(id, index, nilai) {
+      jawabanSiswa[id][index] = nilai;
+    }
+
+    function navigasi(arah) {
+      indexSoal += arah;
+      if (indexSoal < 0) indexSoal = 0;
+      tampilSoal();
+    }
+
+    // --- PROSES SUBMIT ---
+    function selesaiUjian() {
+      if (confirm("Apakah Anda yakin ingin mengumpulkan jawaban?")) {
+        isSubmitting = true;
+        prosesSelesai();
+      }
+    }
+
+    async function prosesSelesai() {
+      clearInterval(timerInterval);
+
+      // 1. KUMPULKAN DATA DULU SEBELUM LAYAR DIUBAH
+      let jawabanFinal = {};
+      for (let id in jawabanSiswa) {
+        if (Array.isArray(jawabanSiswa[id])) {
+          jawabanFinal[id] = jawabanSiswa[id].map(v => v ? v : "").join(",");
+        } else {
+          jawabanFinal[id] = jawabanSiswa[id];
+        }
+      }
+
+      let selNama = document.getElementById('nama');
+      let namaPeserta = selNama.options[selNama.selectedIndex].text;
+
+      const payload = {
+        kelas: document.getElementById('kelas').value,
+        nis: document.getElementById('nama').value,
+        nama: namaPeserta,
+        jawaban: jawabanFinal
+      };
+
+      // 2. UBAH TAMPILAN JADI LOADING
+      document.getElementById('exam-page').innerHTML = `
+        <div class="flex flex-col items-center justify-center h-64 w-full">
+          <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-blue-600 mb-4"></div>
+          <h2 class='text-xl font-bold text-gray-700'>Sedang memeriksa jawaban & menyimpan data...</h2>
+          <p class="text-gray-500 mt-2">Mohon tunggu sebentar...</p>
+        </div>`;
+
+      // 3. KIRIM KE GOOGLE SCRIPT
+      try {
+        const response = await fetch(API_URL, {
+          method: "POST",
+          redirect: "follow", 
+          headers: {
+            "Content-Type": "text/plain;charset=utf-8" 
+          },
+          body: JSON.stringify(payload)
+        });
+        
+        const textResponse = await response.text();
+        const resData = JSON.parse(textResponse);
+        
+        if (resData.status === "success") {
+          let nilai = parseFloat(resData.skor);
+          let kategori = ""; let warna = "";
+
+          if (nilai >= 95.00) { kategori = "🌟 Istimewa"; warna = "text-green-600"; } 
+          else if (nilai >= 76.67) { kategori = "Baik"; warna = "text-blue-500"; } 
+          else if (nilai >= 50.00) { kategori = "Memadai"; warna = "text-yellow-600"; } 
+          else { kategori = "⚠️ Kurang"; warna = "text-red-600"; }
+
+          if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+
+          document.getElementById('exam-page').innerHTML = `
+            <div class="text-center mt-10 w-full">
+              <h2 class='text-3xl font-bold text-gray-800 mb-2'>Ujian Selesai!</h2>
+              <div class="mt-8 p-8 bg-white border border-gray-200 rounded-2xl shadow-xl inline-block min-w-[320px]">
+                <p class="text-gray-500 font-bold uppercase mb-2">Nilai Akhir Anda</p>
+                <p class="text-7xl font-black ${warna}">${nilai}</p>
+                <div class="mt-6 inline-block px-6 py-2 bg-gray-100 rounded-full border border-gray-200">
+                  <p class="text-xl font-bold ${warna}">${kategori}</p>
+                </div>
+              </div>
+              <p class="text-gray-600 mt-8 font-medium">Data nilai Anda telah terekam di sistem sekolah.</p>
+            </div>`;
+        } else {
+          throw new Error("Server error");
+        }
+      } catch (error) {
+        document.getElementById('exam-page').innerHTML = `
+          <div class="text-center mt-20">
+            <h2 class='text-2xl font-bold text-red-600 mb-4'>Koneksi Terputus</h2>
+            <p class="text-gray-600 mb-6">Gagal terhubung ke database. Silakan lapor ke pengawas.</p>
+            <button onclick="location.reload()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded shadow">Muat Ulang Halaman</button>
+          </div>`;
+      }
+    }
+  </script>
+</body>
+</html>
